@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import queue
+import base64
 import json
 import math
 import os
 import re
+import shutil
+import struct
 import subprocess
 import sys
 import threading
@@ -16,6 +19,7 @@ import tkinter as tk
 import urllib.error
 import urllib.request
 import webbrowser
+import zlib
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from IndoSubMod_version import APP_VERSION
@@ -67,7 +71,7 @@ def application_logo() -> Path:
 
 def application_brand_logo() -> Path:
     bundle_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
-    return bundle_root / "AILautanModBanner.png"
+    return bundle_root / "AILautanModBannerDisplay.png"
 
 
 def show_themed_dialog(kind: str, title: str, message: str, **kwargs):
@@ -343,6 +347,21 @@ def load_offline_translator():
     return translation
 
 
+def ollama_is_installed() -> bool:
+    if shutil.which("ollama") or shutil.which("ollama.exe"):
+        return True
+    local = Path(os.environ.get("LOCALAPPDATA", Path.home()))
+    program_files = Path(os.environ.get("ProgramFiles", "C:/Program Files"))
+    return any(path.is_file() for path in (
+        local / "Programs" / "Ollama" / "ollama.exe",
+        program_files / "Ollama" / "ollama.exe",
+    ))
+
+
+def ollama_prompt_choice_path() -> Path:
+    return user_data_root() / "ollama_prompt_choice.txt"
+
+
 def offline_translation_available() -> bool:
     try:
         import argostranslate.translate
@@ -363,6 +382,12 @@ OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 OLLAMA_MODE = "Your local model (Ollama) (Model lokal Anda (Ollama))"
 GPT_MODE = "GPT online (GPT daring)"
 ARGOS_MODE = "Offline (Argos) (Luring (Argos))"
+MODE_LABELS = {
+    ARGOS_MODE: "Offline (Argos) (Luring)",
+    OLLAMA_MODE: "Local model (Ollama) (Model lokal)",
+    GPT_MODE: "GPT online (Daring)",
+}
+MODE_INTERNAL_BY_LABEL = {label: mode for mode, label in MODE_LABELS.items()}
 REGISTER_AUTO = "Automatic (Otomatis)"
 REGISTER_FORMAL = "Formal (Resmi)"
 REGISTER_FRIENDLY = "Friendly (Akrab)"
@@ -652,16 +677,20 @@ class IndoSubModApp(tk.Tk):
         self.geometry("1000x900")
         self.minsize(900, 820)
         self.configure(background=COLORS["background"])
+        self._rounded_button_images = []
         self._configure_style()
         self.path = tk.StringVar()
         self.register = tk.StringVar(value=REGISTER_AUTO)
         self.offline_available = offline_translation_available()
-        self.translation_mode = tk.StringVar(value=OLLAMA_MODE)
+        default_mode = ARGOS_MODE if self.offline_available else GPT_MODE
+        self.translation_mode = tk.StringVar(value=MODE_LABELS[default_mode])
         self.api_key = tk.StringVar(value=os.environ.get("OPENAI_API_KEY", ""))
         self.ollama_model = tk.StringVar(value=os.environ.get("INDOSUB_OLLAMA_MODEL", "qwen2.5:1.5b"))
         self.save_key = tk.BooleanVar(value=True)
         self.events: queue.Queue = queue.Queue()
         self.running = False
+        self._button_animation_jobs = {}
+        self._button_original_styles = {}
         self.processing_started = 0.0
         self.progress_percent = 0.0
         self.progress_target = 0.0
@@ -672,9 +701,76 @@ class IndoSubModApp(tk.Tk):
         self.current_output: Path | None = None
         self.current_video: Path | None = None
         self._build()
+        self._configure_button_animations()
         self.after(150, self._poll)
         if not self.api_key.get():
             self.after(350, self._load_saved_api_key)
+        self.after(600, self._offer_ollama_download)
+
+    def _offer_ollama_download(self):
+        choice_file = ollama_prompt_choice_path()
+        try:
+            if choice_file.is_file() and choice_file.read_text(encoding="utf-8").strip().lower() == "no":
+                return
+        except OSError:
+            pass
+        if ollama_is_installed():
+            return
+
+        dialog = tk.Toplevel(self)
+        dialog.title("Optional local translation (Terjemahan lokal opsional)")
+        dialog.configure(background=COLORS["background"])
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.attributes("-topmost", True)
+        icon = application_icon()
+        if icon.is_file():
+            try:
+                dialog.iconbitmap(default=str(icon))
+            except tk.TclError:
+                pass
+        card = tk.Frame(dialog, background=COLORS["panel"], highlightthickness=1, highlightbackground=COLORS["gold"], padx=22, pady=18)
+        card.pack(fill="both", expand=True, padx=12, pady=12)
+        tk.Label(card, text="Would you like to download Ollama? (Ingin mengunduh Ollama?)", background=COLORS["panel"], foreground=COLORS["gold"], font=("Segoe UI", 13, "bold"), justify="left", wraplength=510).pack(fill="x", anchor="w", pady=(0, 12))
+        message = (
+            "Yes opens the official Ollama for Windows download page. You can install Ollama separately and then select a local model in IndoSubMod.\n"
+            "No continues without opening the site; use Argos offline if installed, or GPT online.\n\n"
+            "Ya membuka halaman resmi unduhan Ollama untuk Windows. Anda dapat memasang Ollama secara terpisah, lalu memilih model lokal di IndoSubMod.\n"
+            "Tidak melanjutkan tanpa membuka situs; gunakan Argos luring jika tersedia atau GPT daring."
+        )
+        tk.Label(card, text=message, background=COLORS["panel"], foreground=COLORS["silver"], font=("Segoe UI", 10), justify="left", anchor="w", wraplength=510).pack(fill="x")
+        buttons = tk.Frame(card, background=COLORS["panel"])
+        buttons.pack(fill="x", pady=(18, 0))
+        decision = {"open": None}
+
+        def finish(open_page: bool):
+            decision["open"] = open_page
+            dialog.destroy()
+
+        ttk.Button(buttons, text="No, continue (Tidak, lanjutkan)", command=lambda: finish(False), style="Secondary.TButton").pack(side="right", padx=(8, 0))
+        ttk.Button(buttons, text="Yes, open Ollama (Ya, buka Ollama)", command=lambda: finish(True), style="Accent.TButton").pack(side="right")
+        dialog.protocol("WM_DELETE_WINDOW", lambda: finish(False))
+        dialog.update_idletasks()
+        width = max(560, dialog.winfo_reqwidth())
+        height = dialog.winfo_reqheight()
+        x = self.winfo_rootx() + max(0, (self.winfo_width() - width) // 2)
+        y = self.winfo_rooty() + max(0, (self.winfo_height() - height) // 2)
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+        dialog.focus_force()
+        self.wait_window(dialog)
+
+        if decision["open"]:
+            try:
+                if not webbrowser.open("https://ollama.com/download/windows", new=2):
+                    raise RuntimeError("The default browser did not open the Ollama download page.")
+            except Exception as exc:
+                show_themed_dialog("error", "Could not open Ollama (Ollama tidak dapat dibuka)", f"Open https://ollama.com/download/windows manually.\n({exc})", parent=self)
+        else:
+            try:
+                choice_file.write_text("no", encoding="utf-8")
+            except OSError:
+                pass
 
     def _configure_style(self):
         style = ttk.Style(self)
@@ -686,20 +782,26 @@ class IndoSubModApp(tk.Tk):
             style.theme_use("clam")
         except tk.TclError:
             pass
-        style.configure(".", font=("Segoe UI", 10), foreground=COLORS["silver"], background=COLORS["background"])
-        style.configure("TFrame", background=COLORS["background"])
-        style.configure("Card.TLabel", background=COLORS["panel"], foreground=COLORS["silver"])
-        style.configure("TLabel", background=COLORS["background"], foreground=COLORS["silver"])
+        style.configure(".", font=("Trebuchet MS", 10), foreground=COLORS["silver"], background=COLORS["background"])
+        style.configure("TFrame", background=COLORS["panel"])
+        style.configure("Card.TLabel", background=COLORS["panel"], foreground=COLORS["silver"], font=("Trebuchet MS", 10))
+        style.configure("TLabel", background=COLORS["panel"], foreground=COLORS["silver"], font=("Trebuchet MS", 10))
+        style.configure("RootMuted.TLabel", background=COLORS["background"], foreground="#C3D0DC", font=("Trebuchet MS", 9))
         style.configure("Hero.TLabel", font=("Segoe UI", 18, "bold"), foreground=COLORS["silver"])
-        style.configure("Muted.TLabel", foreground=COLORS["muted"])
+        style.configure("Muted.TLabel", background=COLORS["panel"], foreground="#BAC9D7", font=("Trebuchet MS", 9))
         style.configure("Accent.TLabel", foreground=COLORS["cyan"])
         style.configure("Gold.TLabel", foreground=COLORS["gold"])
         style.configure("Status.TLabel", foreground=COLORS["cyan"], font=("Segoe UI", 10, "bold"))
+        self._configure_rounded_button_styles(style)
         style.configure("TButton", padding=(12, 8), background=COLORS["panel_alt"], foreground=COLORS["silver"], bordercolor=COLORS["border"], focuscolor=COLORS["cyan"], relief="flat")
-        style.map("TButton", background=[("disabled", COLORS["panel"]), ("active", COLORS["border"])], foreground=[("disabled", COLORS["muted"]), ("active", COLORS["silver"])])
+        style.map("TButton", background=[("disabled", COLORS["panel"]), ("pressed", COLORS["cyan"]), ("active", COLORS["border"])], foreground=[("disabled", COLORS["muted"]), ("pressed", COLORS["ink"]), ("active", COLORS["silver"])])
         style.configure("Accent.TButton", padding=(16, 9), background=COLORS["gold"], foreground=COLORS["ink"], font=("Segoe UI", 10, "bold"), bordercolor=COLORS["gold"])
-        style.map("Accent.TButton", background=[("disabled", COLORS["border"]), ("active", COLORS["cyan_bright"])], foreground=[("disabled", COLORS["muted"]), ("active", COLORS["ink"])])
+        style.map("Accent.TButton", background=[("disabled", COLORS["border"]), ("pressed", COLORS["cyan_bright"]), ("active", COLORS["cyan_bright"])], foreground=[("disabled", COLORS["muted"]), ("pressed", COLORS["ink"]), ("active", COLORS["ink"])])
         style.configure("Secondary.TButton", background=COLORS["panel_alt"], foreground=COLORS["silver"])
+        style.map("Secondary.TButton", background=[("disabled", COLORS["panel"]), ("pressed", COLORS["cyan"]), ("active", COLORS["border"])], foreground=[("disabled", COLORS["muted"]), ("pressed", COLORS["ink"])])
+        style.configure("Pressed.TButton", padding=(11, 7), background=COLORS["cyan"], foreground=COLORS["ink"], bordercolor=COLORS["cyan"])
+        style.configure("Pressed.Accent.TButton", padding=(15, 8), background=COLORS["cyan_bright"], foreground=COLORS["ink"], bordercolor=COLORS["cyan_bright"], font=("Segoe UI", 10, "bold"))
+        style.configure("Pressed.Secondary.TButton", padding=(11, 7), background=COLORS["cyan"], foreground=COLORS["ink"], bordercolor=COLORS["cyan"])
         style.configure("TEntry", padding=(8, 7), fieldbackground=COLORS["panel"], foreground=COLORS["silver"], bordercolor=COLORS["border"])
         style.configure("TCombobox", padding=(7, 6), fieldbackground=COLORS["panel"], background=COLORS["panel_alt"], foreground=COLORS["silver"], arrowcolor=COLORS["cyan"], bordercolor=COLORS["border"])
         style.map("TCombobox", fieldbackground=[("readonly", COLORS["panel"])], foreground=[("readonly", COLORS["silver"])], selectbackground=[("readonly", COLORS["panel"])], selectforeground=[("readonly", COLORS["silver"])])
@@ -710,6 +812,93 @@ class IndoSubModApp(tk.Tk):
         style.map("Treeview", background=[("selected", COLORS["cyan"])], foreground=[("selected", COLORS["ink"])])
         style.configure("Treeview.Heading", background=COLORS["panel_alt"], foreground=COLORS["cyan"], font=("Segoe UI", 10, "bold"), padding=(8, 8))
 
+    def _make_rounded_button_image(self, fill: str, outline: str, bottom: str | None = None) -> tk.PhotoImage:
+        size, radius, border_width, samples = 32, 10.0, 1.5, 4
+        fill_rgb = tuple(int(fill[index:index + 2], 16) for index in (1, 3, 5))
+        bottom_rgb = tuple(int((bottom or fill)[index:index + 2], 16) for index in (1, 3, 5))
+        edge_rgb = tuple(int(outline[index:index + 2], 16) for index in (1, 3, 5))
+        raw = bytearray()
+        for y in range(size):
+            raw.append(0)
+            for x in range(size):
+                fill_count = edge_count = 0
+                for sy in range(samples):
+                    py = y + (sy + 0.5) / samples
+                    for sx in range(samples):
+                        px = x + (sx + 0.5) / samples
+                        dx = abs(px - size / 2) - (size / 2 - radius)
+                        dy = abs(py - size / 2) - (size / 2 - radius)
+                        distance = math.hypot(max(dx, 0), max(dy, 0)) + min(max(dx, dy), 0) - radius
+                        if distance <= -border_width:
+                            fill_count += 1
+                        elif distance <= 0:
+                            edge_count += 1
+                total = fill_count + edge_count
+                if not total:
+                    raw.extend((0, 0, 0, 0))
+                    continue
+                alpha = round(255 * total / (samples * samples))
+                gradient = min(1.0, max(0.0, y / max(1, size - 1)))
+                face_rgb = tuple(round(fill_rgb[i] * (1 - gradient) + bottom_rgb[i] * gradient) for i in range(3))
+                rgb = tuple(round((face_rgb[i] * fill_count + edge_rgb[i] * edge_count) / total) for i in range(3))
+                raw.extend((*rgb, alpha))
+
+        def chunk(kind: bytes, data: bytes) -> bytes:
+            return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+        png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">2I5B", size, size, 8, 6, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b"")
+        image = tk.PhotoImage(data=base64.b64encode(png))
+        self._rounded_button_images.append(image)
+        return image
+
+    def _configure_rounded_button_styles(self, style):
+        palettes = {
+            "TButton": (COLORS["panel_alt"], COLORS["border"], COLORS["border"], COLORS["panel"]),
+            "Accent.TButton": ("#FFE19E", "#FFF0CA", COLORS["cyan_bright"], COLORS["border"]),
+            "Secondary.TButton": (COLORS["panel_alt"], COLORS["border"], COLORS["cyan"], COLORS["panel"]),
+            "Pressed.TButton": (COLORS["cyan"], COLORS["cyan_bright"], COLORS["cyan_bright"], COLORS["panel"]),
+            "Pressed.Accent.TButton": ("#FFEFB7", "#FFF6D8", COLORS["cyan"], COLORS["border"]),
+            "Pressed.Secondary.TButton": (COLORS["cyan"], COLORS["cyan_bright"], COLORS["cyan_bright"], COLORS["panel"]),
+        }
+        inner = [("Button.padding", {"sticky": "nswe", "children": [("Button.label", {"sticky": "nswe"})]})]
+        for button_style, (normal, active, pressed, disabled) in palettes.items():
+            element = "IndoSubMod." + button_style.replace(".", "_") + ".border"
+            image = self._make_rounded_button_image(normal, COLORS["border"], "#E48B2D" if "Accent" in button_style else None)
+            active_image = self._make_rounded_button_image(active, COLORS["cyan"] if "Accent" not in button_style else "#F8A33B", "#F8A33B" if "Accent" in button_style else None)
+            pressed_image = self._make_rounded_button_image(pressed, COLORS["cyan_bright"])
+            disabled_image = self._make_rounded_button_image(disabled, COLORS["border"])
+            style.element_create(element, "image", image, ("disabled", disabled_image), ("pressed", pressed_image), ("active", active_image), border=12, sticky="nsew")
+            style.layout(button_style, [(element, {"sticky": "nswe", "children": inner})])
+
+    def _configure_button_animations(self):
+        self.bind_all("<ButtonPress-1>", self._animate_button_press, add="+")
+
+    def _animate_button_press(self, event):
+        button = event.widget
+        if not isinstance(button, ttk.Button) or button.instate(["disabled"]):
+            return
+        original_style = self._button_original_styles.get(button, button.cget("style") or "TButton")
+        pressed_style = "Pressed." + original_style
+        try:
+            pending = self._button_animation_jobs.pop(button, None)
+            if pending:
+                self.after_cancel(pending)
+            self._button_original_styles[button] = original_style
+            button.configure(style=pressed_style)
+
+            def restore():
+                self._button_animation_jobs.pop(button, None)
+                self._button_original_styles.pop(button, None)
+                try:
+                    if button.winfo_exists():
+                        button.configure(style=original_style)
+                except tk.TclError:
+                    pass
+
+            self._button_animation_jobs[button] = self.after(130, restore)
+        except tk.TclError:
+            pass
+
     def _load_saved_api_key(self):
         if not self.api_key.get():
             saved = get_saved_api_key()
@@ -719,15 +908,15 @@ class IndoSubModApp(tk.Tk):
     def _build(self):
         self.hero_canvas = tk.Canvas(self, height=150, background=COLORS["panel"], highlightthickness=1, highlightbackground=COLORS["cyan"])
         self.hero_canvas.pack(fill="x", padx=18, pady=(12, 6))
-        self._draw_hero(self.hero_canvas, "Indonesian video subtitles", "Subtitle video Bahasa Indonesia", "Speech is translated into English, then Indonesian. (Ucapan diterjemahkan ke bahasa Inggris, lalu bahasa Indonesia.)", use_brand_logo=True)
+        self._draw_hero(self.hero_canvas, "Indonesian video subtitles", "Subtitle video Bahasa Indonesia", "Speech → English → Indonesian. (Ucapan → Inggris → Indonesia.)", use_brand_logo=True)
 
         mode_card = self._make_card()
         mode_card.pack(fill="x", padx=18, pady=3)
         row = ttk.Frame(mode_card)
         row.pack(fill="x", padx=10, pady=(8, 4))
         ttk.Label(row, text=bi("Способ перевода на индонезийский:", "Metode terjemahan ke bahasa Indonesia:"), style="Card.TLabel").pack(side="left")
-        mode_values = (ARGOS_MODE, OLLAMA_MODE, GPT_MODE) if self.offline_available else (OLLAMA_MODE, GPT_MODE)
-        self.mode_box = ttk.Combobox(row, textvariable=self.translation_mode, values=mode_values, state="readonly", width=24)
+        mode_values = tuple(MODE_LABELS[mode] for mode in ((ARGOS_MODE, OLLAMA_MODE, GPT_MODE) if self.offline_available else (OLLAMA_MODE, GPT_MODE)))
+        self.mode_box = ttk.Combobox(row, textvariable=self.translation_mode, values=mode_values, state="readonly", width=32)
         self.mode_box.pack(side="left", padx=8)
         self.mode_box.bind("<<ComboboxSelected>>", self._mode_changed)
         mode_note = bi("Офлайн (Argos) · Своя локальная модель (Ollama) · GPT онлайн", "Luring (Argos) · Model lokal Anda (Ollama) · GPT daring")
@@ -740,7 +929,7 @@ class IndoSubModApp(tk.Tk):
         enable_clipboard_controls(self.key_entry)
         ttk.Checkbutton(self.key_row, text=bi("Запомнить в Windows", "Simpan di Windows"), variable=self.save_key).pack(side="left")
         ttk.Button(self.key_row, text=bi("Получить ключ", "Dapatkan kunci"), command=lambda: webbrowser.open("https://platform.openai.com/api-keys")).pack(side="left", padx=(6, 0))
-        self.key_note = ttk.Label(self, text=bi("Текст речи отправляется OpenAI; оплата API отдельная.", "Teks ucapan dikirim ke OpenAI; biaya API ditagihkan terpisah."), wraplength=950)
+        self.key_note = ttk.Label(self, text=bi("Текст речи отправляется OpenAI; оплата API отдельная.", "Teks ucapan dikirim ke OpenAI; biaya API ditagihkan terpisah."), style="RootMuted.TLabel", wraplength=950)
 
         self.ollama_row = self._make_card()
         ttk.Label(self.ollama_row, text=bi("Локальная модель Ollama:", "Model lokal Ollama:"), style="Card.TLabel").pack(side="left", padx=(10, 0))
@@ -748,7 +937,7 @@ class IndoSubModApp(tk.Tk):
         self.ollama_model_box.pack(side="left", fill="x", expand=True, padx=8)
         enable_clipboard_controls(self.ollama_model_box)
         ttk.Button(self.ollama_row, text=bi("Найти модели", "Cari model"), command=self._refresh_ollama_models).pack(side="left", padx=(0, 8))
-        self.ollama_note = ttk.Label(self, text=bi("Работает локально на этом компьютере. Интернет и облачный API не используются; сначала запустите Ollama и загрузите модель.", "Berjalan secara lokal di komputer ini. Tidak memakai internet atau API cloud; jalankan Ollama dan unduh model terlebih dahulu."), wraplength=990)
+        self.ollama_note = ttk.Label(self, text=bi("Работает локально на этом компьютере. Интернет и облачный API не используются; сначала запустите Ollama и загрузите модель.", "Berjalan secara lokal di komputer ini. Tidak memakai internet atau API cloud; jalankan Ollama dan unduh model terlebih dahulu."), style="RootMuted.TLabel", wraplength=990)
 
         self._video_row = self._make_card()
         self._video_row.pack(fill="x", padx=18, pady=3)
@@ -846,7 +1035,7 @@ class IndoSubModApp(tk.Tk):
             remain_en = "estimate available after the first stages"
             remain_id = "perkiraan muncul setelah tahap awal"
         detail = f"Processing progress (estimated): {self.progress_percent:.1f}% • elapsed: {self._format_duration(elapsed)} • remaining: {remain_en}\nProgres pemrosesan (perkiraan): {self.progress_percent:.1f}% • waktu: {self._format_duration(elapsed)} • tersisa: {remain_id}"
-        self.status.set(f"{stage}\n{detail}")
+        self.status.set(f"{self.progress_stage}\n{detail}")
 
     def _make_card(self, parent=None):
         return tk.Frame(parent or self, background=COLORS["panel"], highlightthickness=1, highlightbackground=COLORS["border"], highlightcolor=COLORS["cyan"], padx=2, pady=2)
@@ -866,19 +1055,20 @@ class IndoSubModApp(tk.Tk):
         canvas.create_text(26, 124, text=subtitle, anchor="w", fill="#B8C9DC", font=("Segoe UI", 9))
         try:
             logo_path = application_brand_logo() if use_brand_logo else application_logo()
-            canvas._logo_image = tk.PhotoImage(file=str(logo_path)).subsample(6, 6) if use_brand_logo else tk.PhotoImage(file=str(logo_path)).subsample(8, 8)
-            canvas.create_image(790, 74, image=canvas._logo_image, anchor="center")
+            canvas._logo_image = tk.PhotoImage(file=str(logo_path)) if use_brand_logo else tk.PhotoImage(file=str(logo_path)).subsample(8, 8)
+            canvas.create_image(830, 74, image=canvas._logo_image, anchor="center")
         except (tk.TclError, OSError):
             canvas._logo_image = None
 
     def _mode_changed(self, _event=None):
-        if self.translation_mode.get() == GPT_MODE:
+        mode = MODE_INTERNAL_BY_LABEL.get(self.translation_mode.get(), self.translation_mode.get())
+        if mode == GPT_MODE:
             self.key_row.pack(fill="x", padx=18, pady=5, before=self._video_row)
             self.key_note.pack(anchor="w", padx=18, pady=(0, 4), before=self._video_row)
         else:
             self.key_row.pack_forget()
             self.key_note.pack_forget()
-        if self.translation_mode.get() == OLLAMA_MODE:
+        if mode == OLLAMA_MODE:
             self.ollama_row.pack(fill="x", padx=18, pady=5, before=self._video_row)
             self.ollama_note.pack(anchor="w", padx=18, pady=(0, 4), before=self._video_row)
         else:
@@ -894,7 +1084,7 @@ class IndoSubModApp(tk.Tk):
             elif self.ollama_model.get() not in models and models:
                 self.ollama_model.set(models[0])
             messagebox.showinfo(bi("Локальные модели", "Model lokal"), bi("Found models: " + str(len(models)), "Jumlah model ditemukan: " + str(len(models))))
-        except RuntimeError as exc:
+        except Exception as exc:
             messagebox.showerror(bi("Ollama недоступна", "Ollama tidak tersedia"), bi(str(exc), str(exc)))
 
     def _choose(self):
@@ -907,7 +1097,7 @@ class IndoSubModApp(tk.Tk):
         if not video.is_file():
             messagebox.showerror(bi("Видео не выбрано", "Video belum dipilih"), bi("Выберите существующий видеофайл.", "Pilih file video yang tersedia."))
             return
-        mode = self.translation_mode.get()
+        mode = MODE_INTERNAL_BY_LABEL.get(self.translation_mode.get(), self.translation_mode.get())
         api_key = self.api_key.get().strip()
         if mode == GPT_MODE and not api_key:
             messagebox.showerror(bi("Нужен ключ OpenAI API", "Kunci OpenAI API diperlukan"), bi("Введите ключ для режима GPT онлайн.", "Masukkan kunci untuk mode GPT daring."))
@@ -951,7 +1141,14 @@ class IndoSubModApp(tk.Tk):
         self.progress_reported_at = self.processing_started
         self._set_processing_progress(1, bi("Подготовка обработки", "Menyiapkan pemrosesan"), True)
         self.status.set(bi("Обработка видео", "Memproses video"))
-        threading.Thread(target=self._process, args=(video, output_video, self.register.get(), mode, api_key, ollama_model), daemon=True).start()
+        worker = threading.Thread(target=self._process, args=(video, output_video, self.register.get(), mode, api_key, ollama_model), daemon=True)
+        try:
+            worker.start()
+        except RuntimeError as exc:
+            self.running = False
+            self.start_button.configure(state="normal")
+            self.status.set(bi("Не удалось запустить обработку", "Pemrosesan gagal dimulai"))
+            messagebox.showerror(bi("Не удалось начать обработку", "Pemrosesan gagal dimulai"), str(exc))
 
     def _process(self, video: Path, output_video: Path, register: str, mode: str, api_key: str, ollama_model: str = ""):
         try:
@@ -1033,12 +1230,15 @@ class IndoSubModApp(tk.Tk):
             self.events.put(("done", message, (output, output_video, records, register)))
         except Exception as exc:
             self.events.put(("error", bi(f"{type(exc).__name__}: {exc}", f"{type(exc).__name__}: {exc}")))
+        finally:
+            self.events.put(("worker_exit",))
 
     def _poll(self):
         try:
             while True:
                 event = self.events.get_nowait()
-                kind, message = event[:2]
+                kind = event[0]
+                message = event[1] if len(event) > 1 else ""
                 if kind == "log":
                     self.log.configure(state="normal")
                     self.log.insert("end", message + "\n")
@@ -1053,6 +1253,12 @@ class IndoSubModApp(tk.Tk):
                 elif kind == "feedback_error":
                     self.status.set(bi("Не удалось обновить дорожку субтитров в MKV.", "Trek subtitle MKV gagal diperbarui."))
                     messagebox.showerror(bi("Видео не обновлено", "Video gagal diperbarui"), message)
+                elif kind == "worker_exit":
+                    if self.running:
+                        self.running = False
+                        self.start_button.configure(state="normal")
+                        self.status.set(bi("Обработка остановилась; можно повторить запуск.", "Pemrosesan berhenti; Anda dapat mencoba lagi."))
+                        messagebox.showerror(bi("Обработка прервана", "Pemrosesan terhenti"), bi("Рабочий поток завершился без результата. Можно выбрать видео и повторить попытку.", "Proses kerja berhenti tanpa hasil. Pilih video dan coba lagi."))
                 else:
                     self.running = False
                     if kind == "done":

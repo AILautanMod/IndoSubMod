@@ -7,6 +7,7 @@ using System.IO.Compression;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Collections.Generic;
 using System.Windows.Forms;
 using Microsoft.Win32;
 using System.Runtime.InteropServices;
@@ -28,7 +29,6 @@ internal sealed class InstallerForm : Form
     private readonly CheckBox coreComponentBox = new CheckBox();
     private readonly CheckBox speechModelBox = new CheckBox();
     private readonly CheckBox offlineModelBox = new CheckBox();
-    private readonly CheckBox ollamaComponentBox = new CheckBox();
     private readonly CheckBox desktopShortcutBox = new CheckBox();
     private readonly Label agreementText = new Label();
     private readonly NeonProgressBar progress = new NeonProgressBar();
@@ -39,6 +39,7 @@ internal sealed class InstallerForm : Form
     private readonly Image bannerImage;
     private readonly Image logoImage;
     private readonly StringBuilder errors = new StringBuilder();
+    private readonly HashSet<Button> pressedButtons = new HashSet<Button>();
     private Process child;
     private string workDirectory;
     private string logPath;
@@ -63,8 +64,8 @@ internal sealed class InstallerForm : Form
     {
         Text = "IndoSubMod Setup v" + Version;
         AutoScaleMode = AutoScaleMode.None;
-        Size = new Size(1280, 1040);
-        MinimumSize = new Size(1280, 1010);
+        Size = new Size(1280, 970);
+        MinimumSize = new Size(1280, 940);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = bg;
         ForeColor = Color.White;
@@ -122,23 +123,40 @@ internal sealed class InstallerForm : Form
         tagline.Visible = false;
         hero.Controls.Add(tagline);
 
+        Panel versionPanel = new Panel();
+        versionPanel.Location = new Point(450, 16);
+        versionPanel.Size = new Size(250, 62);
+        versionPanel.BackColor = Color.FromArgb(5, 12, 22);
+        versionPanel.Paint += delegate(object sender, PaintEventArgs e) { DrawRoundedBorder(e.Graphics, versionPanel.ClientRectangle, Color.FromArgb(0, 190, 255), 1.5F); };
+        hero.Controls.Add(versionPanel);
+
         Label versionLabel = new Label();
-        versionLabel.Text = "Version " + Version + " (Versi " + Version + ")";
-        versionLabel.Font = new Font("Segoe UI Semibold", 20F, FontStyle.Bold);
+        versionLabel.Text = "Version " + Version;
+        versionLabel.Font = new Font("Segoe UI Semibold", 18F, FontStyle.Bold);
         versionLabel.ForeColor = gold;
-        versionLabel.AutoSize = true;
-        versionLabel.Location = new Point(450, 22);
-        versionLabel.Size = new Size(520, 40);
         versionLabel.AutoSize = false;
+        versionLabel.Location = new Point(12, 4);
+        versionLabel.Size = new Size(224, 30);
         versionLabel.BackColor = Color.Transparent;
-        hero.Controls.Add(versionLabel);
+        FitLabelToBounds(versionLabel);
+        versionPanel.Controls.Add(versionLabel);
+        Label versionTranslation = new Label();
+        versionTranslation.Text = "Versi " + Version;
+        versionTranslation.Font = new Font("Segoe UI", 11F, FontStyle.Regular);
+        versionTranslation.ForeColor = Color.FromArgb(193, 219, 236);
+        versionTranslation.AutoSize = false;
+        versionTranslation.Location = new Point(13, 34);
+        versionTranslation.Size = new Size(224, 21);
+        versionTranslation.BackColor = Color.Transparent;
+        FitLabelToBounds(versionTranslation);
+        versionPanel.Controls.Add(versionTranslation);
         Label heroSubtitle = new Label();
         heroSubtitle.Text = "Application installer\r\n(Pemasang aplikasi)";
         heroSubtitle.Font = new Font("Segoe UI", 12F);
         heroSubtitle.ForeColor = Color.FromArgb(190, 208, 224);
         heroSubtitle.AutoSize = false;
         heroSubtitle.Size = new Size(500, 58);
-        heroSubtitle.Location = new Point(455, 76);
+        heroSubtitle.Location = new Point(455, 88);
         heroSubtitle.BackColor = Color.Transparent;
         hero.Controls.Add(heroSubtitle);
 
@@ -152,7 +170,7 @@ internal sealed class InstallerForm : Form
         pathLabel.ForeColor = Color.FromArgb(220, 230, 240);
         pathCard.Controls.Add(pathLabel);
         FitLabelToBounds(pathLabel);
-        AddVisualIcon(pathCard, "folder", new Point(230, 13), new Size(34, 38), gold);
+        AddVisualIcon(pathCard, "folder", new Point(224, 12), new Size(44, 44), gold);
 
         installPathBox.Text = GetDefaultInstallPath();
         installPathBox.Location = new Point(290, 16);
@@ -169,11 +187,12 @@ internal sealed class InstallerForm : Form
         browseButton.FlatAppearance.BorderColor = Color.FromArgb(43, 78, 104);
         browseButton.BackColor = panel;
         browseButton.ForeColor = Color.White;
+        AnimateButton(browseButton);
         browseButton.Click += delegate { BrowseForInstallPath(); };
         pathCard.Controls.Add(browseButton);
 
         componentsBox.Location = new Point(22, 284);
-        componentsBox.Size = new Size(1236, 344);
+        componentsBox.Size = new Size(1236, 286);
         componentsBox.BackColor = Color.FromArgb(7, 18, 30);
         componentsBox.Paint += delegate(object sender, PaintEventArgs e) { DrawRoundedBorder(e.Graphics, componentsBox.ClientRectangle, gold, 1.4F); };
         Controls.Add(componentsBox);
@@ -194,11 +213,9 @@ internal sealed class InstallerForm : Form
         offlineModelBox.Checked = true;
         AddComponentRow(desktopShortcutBox, "monitor", "IndoSubMod desktop shortcut", "A shortcut for quick access. (Pintasan untuk menjalankan aplikasi dengan cepat.)", 224, 54);
         desktopShortcutBox.Checked = true;
-        AddComponentRow(ollamaComponentBox, "python", "Ollama and Qwen2.5 1.5B local model (optional)", "Downloads Ollama and a local translation model (about 1 GB). (Mengunduh Ollama dan model terjemahan lokal, sekitar 1 GB.)", 282, 54);
-        ollamaComponentBox.Checked = true;
 
         agreementText.Text = "Prototype for evaluation only; not for commercial use. This app does not grant rights to sell, alter, or distribute selected videos. The source file is unchanged: a separate MKV with a subtitle track is created; video and audio are not re-encoded. Video rights remain with their owners. Third-party software and model licenses still apply.\r\nPrototipe hanya untuk evaluasi; bukan untuk penggunaan komersial. Aplikasi ini tidak memberikan hak untuk menjual, mengubah, atau mendistribusikan video yang dipilih. File sumber tidak diubah: file MKV terpisah dengan trek subtitle dibuat; video dan audio tidak dikodekan ulang. Hak video tetap pada pemiliknya. Lisensi perangkat lunak dan model pihak ketiga tetap berlaku.";
-        agreementText.Location = new Point(40, 634);
+        agreementText.Location = new Point(40, 576);
         agreementText.Size = new Size(1168, 88);
         agreementText.ForeColor = Color.FromArgb(190, 208, 224);
         agreementText.BackColor = bg;
@@ -211,21 +228,21 @@ internal sealed class InstallerForm : Form
         stageLabel.Font = new Font("Segoe UI Semibold", 12F, FontStyle.Bold);
         stageLabel.ForeColor = Color.White;
         stageLabel.AutoSize = false;
-        stageLabel.Location = new Point(96, 728);
+        stageLabel.Location = new Point(96, 670);
         stageLabel.Size = new Size(1050, 28);
         FitLabelToBounds(stageLabel);
         Controls.Add(stageLabel);
-        AddVisualIcon(this, "gear", new Point(34, 711), new Size(48, 48), gold);
+        AddVisualIcon(this, "gear", new Point(34, 653), new Size(48, 48), gold);
 
         detailLabel.Text = "Clicking Install means you accept the terms above. (Klik Instal berarti Anda menyetujui ketentuan di atas.)";
         detailLabel.Font = new Font("Segoe UI", 9.5F);
         detailLabel.ForeColor = Color.FromArgb(151, 170, 189);
-        detailLabel.Location = new Point(96, 757);
+        detailLabel.Location = new Point(96, 699);
         detailLabel.Size = new Size(1120, 42);
         FitLabelToBounds(detailLabel);
         Controls.Add(detailLabel);
 
-        progress.Location = new Point(40, 804);
+        progress.Location = new Point(40, 746);
         progress.Size = new Size(1100, 22);
         progress.Minimum = 0;
         progress.Maximum = 10000;
@@ -237,7 +254,7 @@ internal sealed class InstallerForm : Form
         percentLabel.Text = "0%";
         percentLabel.Font = new Font("Segoe UI Semibold", 13F, FontStyle.Bold);
         percentLabel.ForeColor = cyan;
-        percentLabel.Location = new Point(1147, 801);
+        percentLabel.Location = new Point(1147, 743);
         percentLabel.Size = new Size(82, 28);
         percentLabel.TextAlign = ContentAlignment.MiddleLeft;
         Controls.Add(percentLabel);
@@ -245,29 +262,31 @@ internal sealed class InstallerForm : Form
         footerLabel.Text = "Click Install to accept the terms and continue. (Klik Instal untuk menyetujui ketentuan dan melanjutkan.)";
         footerLabel.Font = new Font("Segoe UI", 9.5F);
         footerLabel.ForeColor = Color.FromArgb(118, 139, 158);
-        footerLabel.Location = new Point(40, 832);
+        footerLabel.Location = new Point(40, 774);
         footerLabel.Size = new Size(1165, 28);
         FitLabelToBounds(footerLabel);
         Controls.Add(footerLabel);
 
         logButton.Text = "▤  Log (Log)";
-        logButton.Location = new Point(40, 862);
+        logButton.Location = new Point(40, 804);
         logButton.Size = new Size(210, 42);
         logButton.FlatStyle = FlatStyle.Flat;
         logButton.FlatAppearance.BorderColor = Color.FromArgb(43, 78, 104);
         logButton.BackColor = panel;
         logButton.ForeColor = Color.FromArgb(190, 208, 224);
+        AnimateButton(logButton);
         logButton.Enabled = true;
         logButton.Click += delegate { OpenLog(); };
         Controls.Add(logButton);
 
         supportButton.Text = "Support the creator\r\n(Dukung kreator)";
-        supportButton.Location = new Point(650, 862);
-        supportButton.Size = new Size(260, 55);
+        supportButton.Location = new Point(650, 801);
+        supportButton.Size = new Size(260, 61);
         supportButton.FlatStyle = FlatStyle.Flat;
         supportButton.FlatAppearance.BorderSize = 0;
         supportButton.Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold);
         supportButton.Cursor = Cursors.Hand;
+        AnimateButton(supportButton);
         supportButton.Paint += DrawGoldButton;
         supportButton.MouseEnter += delegate { supportButton.Invalidate(); };
         supportButton.MouseLeave += delegate { supportButton.Invalidate(); };
@@ -281,13 +300,14 @@ internal sealed class InstallerForm : Form
 
         closeButton.Text = "";
         closeButton.AccessibleName = "Accept the terms and install (Setujui ketentuan dan instal)";
-        closeButton.Location = new Point(935, 862);
-        closeButton.Size = new Size(280, 55);
+        closeButton.Location = new Point(935, 801);
+        closeButton.Size = new Size(280, 61);
         closeButton.FlatStyle = FlatStyle.Flat;
         closeButton.FlatAppearance.BorderSize = 0;
         closeButton.BackColor = gold;
         closeButton.ForeColor = Color.FromArgb(26, 17, 5);
         closeButton.Font = new Font("Segoe UI Semibold", 14F, FontStyle.Bold);
+        AnimateButton(closeButton);
         closeButton.Paint += DrawGoldButton;
         closeButton.Enabled = true;
         closeButton.Click += delegate { if (finished) Close(); else if (!installStarted) { termsAccepted = true; BeginInstall(); } };
@@ -317,7 +337,9 @@ internal sealed class InstallerForm : Form
 
     private void AddComponentRow(CheckBox checkBox, string icon, string title, string description, int y, int height)
     {
-        Panel row = CreateCard(new Point(22, y), new Size(1190, height), Color.FromArgb(37, 73, 98));
+        Panel row = new Panel();
+        row.Location = new Point(22, y);
+        row.Size = new Size(1190, height);
         row.BackColor = Color.FromArgb(5, 16, 28);
         componentsBox.Controls.Add(row);
         checkBox.Text = "";
@@ -359,61 +381,85 @@ internal sealed class InstallerForm : Form
     private void DrawVisualIcon(string kind, Graphics g, Rectangle r, Color accent)
     {
         g.SmoothingMode = SmoothingMode.AntiAlias;
-        using (Pen pen = new Pen(accent, Math.Max(2F, r.Width / 22F)))
-        using (Pen pale = new Pen(Color.FromArgb(218, 235, 248), Math.Max(1.5F, r.Width / 28F)))
-        using (SolidBrush blue = new SolidBrush(Color.FromArgb(0, 167, 235)))
-        using (SolidBrush amber = new SolidBrush(Color.FromArgb(255, 184, 58)))
-        using (Font f = new Font("Segoe UI", Math.Max(8F, r.Width / 4.5F), FontStyle.Bold))
+        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        float scale = Math.Min(r.Width, r.Height) / 96F;
+        g.TranslateTransform((r.Width - 96F * scale) / 2F, (r.Height - 96F * scale) / 2F);
+        g.ScaleTransform(scale, scale);
+        using (Pen cyanPen = new Pen(Color.FromArgb(0, 190, 255), 4F))
+        using (Pen palePen = new Pen(Color.FromArgb(218, 239, 249), 3F))
+        using (Pen goldPen = new Pen(Color.FromArgb(255, 183, 66), 4F))
+        using (SolidBrush cyanFill = new SolidBrush(Color.FromArgb(24, 0, 190, 255)))
+        using (SolidBrush goldFill = new SolidBrush(Color.FromArgb(30, 255, 183, 66)))
+        using (SolidBrush darkFill = new SolidBrush(Color.FromArgb(10, 23, 38)))
         {
-            float x = r.Width * .12F, y = r.Height * .12F, w = r.Width * .76F, h = r.Height * .76F;
+            cyanPen.StartCap = cyanPen.EndCap = LineCap.Round;
+            cyanPen.LineJoin = LineJoin.Round;
+            palePen.StartCap = palePen.EndCap = LineCap.Round;
+            palePen.LineJoin = LineJoin.Round;
+            goldPen.StartCap = goldPen.EndCap = LineCap.Round;
+            goldPen.LineJoin = LineJoin.Round;
             if (kind == "folder")
             {
-                g.DrawRectangle(pen, x, y + h * .2F, w, h * .7F);
-                g.DrawLine(pen, x, y + h * .2F, x + w * .4F, y + h * .2F);
-                g.DrawLine(pen, x + w * .4F, y + h * .2F, x + w * .5F, y);
-                g.DrawLine(pen, x + w * .5F, y, x + w * .78F, y);
+                PointF[] folder = { new PointF(12,28), new PointF(12,28), new PointF(12,22), new PointF(18,22), new PointF(39,22), new PointF(47,31), new PointF(78,31), new PointF(84,37), new PointF(84,71), new PointF(78,77), new PointF(18,77), new PointF(12,71) };
+                using (GraphicsPath p = new GraphicsPath()) { p.AddLines(folder); p.CloseFigure(); g.FillPath(goldFill, p); g.DrawPath(goldPen, p); }
+                g.DrawLine(goldPen, 13, 40, 83, 40);
+                RectangleF doc = new RectangleF(47, 50, 18, 25);
+                g.FillRectangle(darkFill, doc); g.DrawRectangle(palePen, doc.X, doc.Y, doc.Width, doc.Height);
+                g.DrawLine(cyanPen, 52, 57, 60, 57); g.DrawLine(cyanPen, 52, 63, 60, 63);
+                g.DrawLine(cyanPen, 56, 45, 56, 51); g.DrawLine(cyanPen, 51, 48, 56, 43); g.DrawLine(cyanPen, 61, 48, 56, 43);
             }
             else if (kind == "wave")
             {
-                float[] bars = { .28F, .52F, .78F, 1F, .7F, .42F, .25F };
-                for (int i = 0; i < bars.Length; i++) { float bx = x + i * w / bars.Length + w / 18F; float bh = h * bars[i]; g.DrawLine(pen, bx, (r.Height - bh) / 2F, bx, (r.Height + bh) / 2F); }
+                float[] heights = { 12, 24, 36, 56, 40, 24, 12 };
+                for (int i = 0; i < heights.Length; i++) { float x = 16 + i * 12; g.DrawLine(cyanPen, x, 48 - heights[i] / 2, x, 48 + heights[i] / 2); }
+                g.DrawLine(palePen, 8, 48, 13, 48); g.DrawLine(palePen, 83, 48, 88, 48);
             }
             else if (kind == "translate")
             {
-                RectangleF a = new RectangleF(x, y, w * .63F, h * .57F);
-                RectangleF b = new RectangleF(x + w * .35F, y + h * .35F, w * .62F, h * .57F);
-                DrawRoundRect(g, pen, a, 6); g.DrawLine(pen, x + w * .18F, y + h * .57F, x + w * .1F, y + h * .72F);
-                using (SolidBrush white = new SolidBrush(Color.White)) using (SolidBrush goldText = new SolidBrush(Color.FromArgb(255, 202, 105)))
-                { g.DrawString("A", f, white, x + w * .18F, y + h * .12F); g.DrawString("あ", f, goldText, x + w * .54F, y + h * .43F); }
-                DrawRoundRect(g, pale, b, 6);
+                DrawRoundRect(g, cyanPen, new RectangleF(9, 15, 51, 42), 8);
+                g.DrawLine(cyanPen, 23, 57, 16, 66); g.DrawLine(cyanPen, 16, 66, 32, 57);
+                g.DrawLine(palePen, 25, 30, 45, 30); g.DrawLine(palePen, 35, 26, 35, 30);
+                g.DrawLine(palePen, 28, 33, 42, 45); g.DrawLine(palePen, 44, 33, 32, 45);
+                DrawRoundRect(g, goldPen, new RectangleF(39, 40, 48, 40), 8);
+                using (Font languageFont = new Font("Segoe UI", 15F, FontStyle.Bold, GraphicsUnit.Pixel))
+                using (SolidBrush goldText = new SolidBrush(Color.FromArgb(255, 183, 66)))
+                { g.DrawString("A", languageFont, goldText, 53, 47); }
+                g.DrawLine(cyanPen, 44, 73, 48, 73);
             }
             else if (kind == "monitor")
             {
-                DrawRoundRect(g, pen, new RectangleF(x, y, w, h * .62F), 4);
-                g.DrawLine(pen, r.Width / 2F, y + h * .63F, r.Width / 2F, y + h * .88F);
-                g.DrawLine(pen, x + w * .25F, y + h * .9F, x + w * .75F, y + h * .9F);
+                DrawRoundRect(g, cyanPen, new RectangleF(10, 15, 76, 51), 6);
+                g.DrawLine(palePen, 20, 25, 76, 25);
+                g.DrawLine(cyanPen, 48, 67, 48, 79); g.DrawLine(cyanPen, 31, 82, 65, 82);
+                using (SolidBrush dot = new SolidBrush(Color.FromArgb(255, 183, 66))) { g.FillEllipse(dot, 25, 18, 3, 3); g.FillEllipse(dot, 32, 18, 3, 3); }
             }
             else if (kind == "python")
             {
-                FillRoundRect(g, blue, new RectangleF(x + w * .15F, y, w * .62F, h * .47F), 9);
-                FillRoundRect(g, amber, new RectangleF(x + w * .23F, y + h * .5F, w * .62F, h * .47F), 9);
-                g.FillEllipse(Brushes.White, x + w * .28F, y + h * .11F, w * .08F, w * .08F);
-                g.FillEllipse(Brushes.White, x + w * .63F, y + h * .69F, w * .08F, w * .08F);
+                using (SolidBrush blue = new SolidBrush(Color.FromArgb(0, 167, 235)))
+                using (SolidBrush amber = new SolidBrush(Color.FromArgb(255, 183, 66)))
+                {
+                    FillRoundRect(g, blue, new RectangleF(30, 12, 36, 35), 9);
+                    FillRoundRect(g, amber, new RectangleF(30, 49, 36, 35), 9);
+                    g.FillRectangle(blue, 43, 39, 23, 8); g.FillRectangle(amber, 30, 49, 23, 8);
+                    g.FillEllipse(Brushes.White, 40, 21, 4, 4); g.FillEllipse(Brushes.White, 53, 70, 4, 4);
+                }
             }
             else if (kind == "package")
             {
-                PointF[] top = { new PointF(r.Width * .5F, y), new PointF(x + w, y + h * .22F), new PointF(r.Width * .5F, y + h * .45F), new PointF(x, y + h * .22F) };
-                g.DrawPolygon(pen, top); g.DrawLine(pen, x, y + h * .22F, x, y + h * .72F); g.DrawLine(pen, r.Width * .5F, y + h * .45F, r.Width * .5F, y + h); g.DrawLine(pen, x + w, y + h * .22F, x + w, y + h * .72F); g.DrawLine(pen, x, y + h * .72F, r.Width * .5F, y + h); g.DrawLine(pen, x + w, y + h * .72F, r.Width * .5F, y + h);
+                PointF[] top = { new PointF(48,12), new PointF(82,29), new PointF(48,47), new PointF(14,29) };
+                g.DrawPolygon(cyanPen, top);
+                g.DrawLine(cyanPen, 14, 29, 14, 67); g.DrawLine(cyanPen, 14, 67, 48, 84); g.DrawLine(cyanPen, 48, 47, 48, 84);
+                g.DrawLine(cyanPen, 82, 29, 82, 67); g.DrawLine(cyanPen, 82, 67, 48, 84);
+                g.DrawLine(palePen, 31, 20, 65, 38);
             }
             else if (kind == "gear")
             {
-                g.DrawEllipse(pen, x + w * .2F, y + h * .2F, w * .6F, h * .6F);
-                g.DrawEllipse(pen, x + w * .4F, y + h * .4F, w * .2F, h * .2F);
-                for (int i = 0; i < 8; i++) { double angle = i * Math.PI / 4; float cx = r.Width / 2F, cy = r.Height / 2F; g.DrawLine(pen, cx + (float)Math.Cos(angle) * w * .36F, cy + (float)Math.Sin(angle) * h * .36F, cx + (float)Math.Cos(angle) * w * .49F, cy + (float)Math.Sin(angle) * h * .49F); }
+                g.DrawEllipse(goldPen, 28, 28, 40, 40); g.DrawEllipse(goldPen, 40, 40, 16, 16);
+                for (int i = 0; i < 8; i++) { double angle = i * Math.PI / 4; g.DrawLine(goldPen, 48 + (float)Math.Cos(angle) * 25, 48 + (float)Math.Sin(angle) * 25, 48 + (float)Math.Cos(angle) * 34, 48 + (float)Math.Sin(angle) * 34); }
             }
         }
+        g.ResetTransform();
     }
-
     private void DrawRoundRect(Graphics g, Pen pen, RectangleF r, float radius)
     {
         using (GraphicsPath path = new GraphicsPath())
@@ -515,10 +561,56 @@ internal sealed class InstallerForm : Form
         button.ForeColor = Color.FromArgb(226, 236, 246);
         button.Font = new Font("Segoe UI", text == "×" ? 17F : 11F);
         button.Cursor = Cursors.Hand;
+        AnimateButton(button);
         button.MouseEnter += delegate { if (text != "×") button.BackColor = Color.FromArgb(22, 40, 56); };
         button.MouseLeave += delegate { if (text != "×") button.BackColor = Color.FromArgb(3, 9, 16); };
         parent.Controls.Add(button);
         return button;
+    }
+
+    private void AnimateButton(Button button)
+    {
+        float radius = 20F;
+        ApplyRoundedButtonRegion(button, radius);
+        button.Resize += delegate { ApplyRoundedButtonRegion(button, radius); };
+        button.FlatAppearance.MouseDownBackColor = Color.FromArgb(0, 157, 205);
+        button.FlatAppearance.MouseOverBackColor = Color.FromArgb(24, 48, 67);
+        button.MouseDown += delegate(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left || !button.Enabled) return;
+            pressedButtons.Add(button);
+            button.Invalidate();
+        };
+        button.MouseUp += delegate(object sender, MouseEventArgs e)
+        {
+            if (!pressedButtons.Contains(button)) return;
+            Timer pulse = new Timer();
+            pulse.Interval = 110;
+            pulse.Tick += delegate
+            {
+                pulse.Stop();
+                pulse.Dispose();
+                pressedButtons.Remove(button);
+                if (!button.IsDisposed) button.Invalidate();
+            };
+            pulse.Start();
+        };
+        button.MouseLeave += delegate
+        {
+            if (!button.Capture && pressedButtons.Remove(button)) button.Invalidate();
+        };
+    }
+
+    private void ApplyRoundedButtonRegion(Button button, float radius)
+    {
+        if (button.IsDisposed || button.Width < 2 || button.Height < 2) return;
+        using (GraphicsPath path = RoundedPath(new Rectangle(0, 0, button.Width, button.Height), Math.Min(radius, Math.Min(button.Width, button.Height) / 2F)))
+        {
+            Region replacement = new Region(path);
+            Region previous = button.Region;
+            button.Region = replacement;
+            if (previous != null) previous.Dispose();
+        }
     }
 
     private void CaptionMouseDown(object sender, MouseEventArgs e)
@@ -534,11 +626,12 @@ internal sealed class InstallerForm : Form
         Graphics g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         Rectangle r = new Rectangle(2, 2, button.Width - 5, button.Height - 5);
-        using (GraphicsPath path = RoundedPath(r, 14))
+        using (GraphicsPath path = RoundedPath(r, 20))
         {
         bool hovered = button.ClientRectangle.Contains(button.PointToClient(Cursor.Position));
-        Color top = hovered ? Color.FromArgb(255, 239, 190) : Color.FromArgb(255, 225, 158);
-        Color bottom = hovered ? Color.FromArgb(248, 163, 59) : Color.FromArgb(228, 139, 45);
+        bool pressed = pressedButtons.Contains(button);
+        Color top = pressed ? Color.FromArgb(91, 221, 255) : (hovered ? Color.FromArgb(255, 239, 190) : Color.FromArgb(255, 225, 158));
+        Color bottom = pressed ? Color.FromArgb(0, 157, 205) : (hovered ? Color.FromArgb(248, 163, 59) : Color.FromArgb(228, 139, 45));
         using (LinearGradientBrush brush = new LinearGradientBrush(r, top, bottom, LinearGradientMode.Vertical))
         using (Pen border = new Pen(Color.FromArgb(255, 230, 174), 2F))
         using (Pen glow = new Pen(Color.FromArgb(135, 255, 184, 88), 5F))
@@ -556,9 +649,14 @@ internal sealed class InstallerForm : Form
                 format.Alignment = StringAlignment.Center;
                 format.LineAlignment = StringAlignment.Center;
                 format.Trimming = StringTrimming.None;
-                format.FormatFlags = StringFormatFlags.NoWrap;
-                RectangleF textBounds = new RectangleF(r.X + 8, r.Y + 5, r.Width - 16, r.Height - 10);
-                g.DrawString(label, labelFont, ink, textBounds, format);
+                string[] lines = label.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+                float lineHeight = labelFont.GetHeight(g);
+                float firstLineY = (button.Height - lineHeight * lines.Length) / 2F;
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    RectangleF lineBounds = new RectangleF(4, firstLineY + i * lineHeight, button.Width - 8, lineHeight + 2F);
+                    g.DrawString(lines[i], labelFont, ink, lineBounds, format);
+                }
             }
         }
         }
@@ -639,6 +737,7 @@ internal sealed class InstallerForm : Form
 
     private void BrowseForInstallPath()
     {
+        if (installStarted) return;
         using (FolderBrowserDialog dialog = new FolderBrowserDialog())
         {
             dialog.Description = "Choose the IndoSubMod folder (Pilih folder IndoSubMod)";
@@ -664,9 +763,10 @@ internal sealed class InstallerForm : Form
             if (String.IsNullOrWhiteSpace(installPathBox.Text) || String.Equals(installRoot.TrimEnd(Path.DirectorySeparatorChar), driveRoot, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Choose a folder inside the drive, not the drive root. (Pilih folder di dalam drive, bukan root drive.)");
             installPathBox.Text = installRoot;
-            installPathBox.Enabled = false;
-            browseButton.Enabled = false;
-            componentsBox.Enabled = false;
+            installPathBox.ReadOnly = true;
+            browseButton.Text = "Locked (Terkunci)";
+            offlineModelBox.Enabled = false;
+            desktopShortcutBox.Enabled = false;
             installStarted = true;
             overallStarted = DateTime.Now;
             operationStarted = overallStarted;
@@ -705,7 +805,6 @@ internal sealed class InstallerForm : Form
             // The script validates and converts numeric 1/0 values explicitly.
             info.Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File \"" + Path.Combine(workDirectory, "install.ps1") + "\" -InstallRootBase64 " + installRootArgument +
                 " -InstallOfflineModel " + (offlineModelBox.Checked ? "1" : "0") +
-                " -InstallOllama " + (ollamaComponentBox.Checked ? "1" : "0") +
                 " -CreateDesktopShortcut " + (desktopShortcutBox.Checked ? "1" : "0");
             info.WorkingDirectory = workDirectory;
             info.UseShellExecute = false;
@@ -807,8 +906,6 @@ internal sealed class InstallerForm : Form
             case "build": return "Building IndoSubMod.exe (Menyusun IndoSubMod.exe)";
             case "models": return "Downloading speech and translation models (Mengunduh model ucapan dan terjemahan)";
             case "speech_model": return "Downloading the Whisper speech recognition model (Mengunduh model pengenalan ucapan Whisper)";
-            case "ollama_download": return "Downloading and installing Ollama (Mengunduh dan memasang Ollama)";
-            case "ollama_model": return "Downloading the local translation model (Mengunduh model terjemahan lokal)";
             case "replace": return "Replacing the installed IndoSubMod version (Mengganti versi IndoSubMod)";
             case "register": return "Adding IndoSubMod to the Windows app list (Menambahkan IndoSubMod ke daftar aplikasi Windows)";
             default: return "Installing (Menginstal)";
@@ -991,6 +1088,7 @@ internal sealed class InstallerForm : Form
             ok.FlatAppearance.BorderSize = 0;
             ok.BackColor = cyan;
             ok.ForeColor = Color.FromArgb(3, 14, 25);
+            AnimateButton(ok);
             ok.Click += delegate { dialog.Close(); };
             card.Controls.Add(heading);
             card.Controls.Add(body);

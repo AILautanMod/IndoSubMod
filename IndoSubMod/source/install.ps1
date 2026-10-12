@@ -1,7 +1,6 @@
 ﻿param(
     [string]$InstallRootBase64,
     [string]$InstallOfflineModel = '1',
-    [string]$InstallOllama = '1',
     [string]$CreateDesktopShortcut = '1'
 )
 function ConvertTo-SetupBoolean([string]$Value, [string]$Name) {
@@ -12,7 +11,6 @@ function ConvertTo-SetupBoolean([string]$Value, [string]$Name) {
     }
 }
 $InstallOfflineModel = ConvertTo-SetupBoolean $InstallOfflineModel 'InstallOfflineModel'
-$InstallOllama = ConvertTo-SetupBoolean $InstallOllama 'InstallOllama'
 $CreateDesktopShortcut = ConvertTo-SetupBoolean $CreateDesktopShortcut 'CreateDesktopShortcut'
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'Continue'
@@ -241,6 +239,7 @@ try {
     Copy-Item (Join-Path $PSScriptRoot 'IndoSubModBanner.png') (Join-Path $source 'IndoSubModBanner.png') -Force
     Copy-Item (Join-Path $PSScriptRoot 'IndoSubModLogo.png') (Join-Path $source 'IndoSubModLogo.png') -Force
     Copy-Item (Join-Path $PSScriptRoot 'AILautanModBanner.png') (Join-Path $source 'AILautanModBanner.png') -Force
+    Copy-Item (Join-Path $PSScriptRoot 'AILautanModBannerDisplay.png') (Join-Path $source 'AILautanModBannerDisplay.png') -Force
 
     $python = Join-Path $pythonHome 'python.exe'
     if (-not $reusedPythonHome -and $incompleteManagedPythonHome) { $pythonHome = $incompleteManagedPythonHome; $python = Join-Path $pythonHome 'python.exe' }
@@ -298,79 +297,8 @@ try {
     }
     Report-SetupProgress 36
 
-    if ($InstallOllama) {
-        $ollamaModel = 'qwen2.5:1.5b'
-        $ollamaInstaller = Join-Path $installTempDirectory 'OllamaSetup.exe'
-        $ollamaExe = $null
-        $ollamaCandidates = @(
-            (Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama.exe'),
-            (Join-Path $env:ProgramFiles 'Ollama\ollama.exe')
-        )
-        $ollamaCommand = Get-Command 'ollama.exe' -ErrorAction SilentlyContinue
-        if ($ollamaCommand) { $ollamaExe = $ollamaCommand.Source }
-        if (-not $ollamaExe) { $ollamaExe = $ollamaCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1 }
-
-        if (-not $ollamaExe) {
-            Report-SetupStage 'ollama_download'
-            Say 'Downloading the official Ollama installer'
-            Report-SetupProgress 38
-            Invoke-WebRequest -Uri 'https://ollama.com/download/OllamaSetup.exe' -OutFile $ollamaInstaller
-            $ollamaSignature = Get-AuthenticodeSignature -LiteralPath $ollamaInstaller
-            if ($ollamaSignature.Status -ne 'Valid' -or -not $ollamaSignature.SignerCertificate -or $ollamaSignature.SignerCertificate.Subject -notmatch '(^|,\s*)O=Ollama Inc\.(,|$)') {
-                Remove-Item -LiteralPath $ollamaInstaller -Force -ErrorAction SilentlyContinue
-                throw 'The Ollama installer failed publisher signature verification. It was not executed.'
-            }
-            Say 'Installing Ollama from the verified official installer'
-            Report-SetupProgress 42
-            $ollamaInstallProcess = Start-Process -FilePath $ollamaInstaller -ArgumentList '/VERYSILENT /NORESTART /SUPPRESSMSGBOXES' -WindowStyle Hidden -PassThru -Wait
-            if ($ollamaInstallProcess.ExitCode -ne 0) { throw "The Ollama installer exited with code $($ollamaInstallProcess.ExitCode)." }
-            Remove-Item -LiteralPath $ollamaInstaller -Force -ErrorAction SilentlyContinue
-            $ollamaCommand = Get-Command 'ollama.exe' -ErrorAction SilentlyContinue
-            if ($ollamaCommand) { $ollamaExe = $ollamaCommand.Source }
-            if (-not $ollamaExe) { $ollamaExe = $ollamaCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1 }
-            if (-not $ollamaExe) { throw 'Ollama setup completed but ollama.exe could not be located.' }
-        } else {
-            Say "Using the existing Ollama installation at $ollamaExe"
-        }
-
-        Report-SetupStage 'ollama_model'
-        Say "Checking the local translation model $ollamaModel"
-        Report-SetupProgress 45
-        $ollamaAvailable = $false
-        for ($attempt = 0; $attempt -lt 45; $attempt++) {
-            try {
-                $null = Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/tags' -TimeoutSec 2
-                $ollamaAvailable = $true
-                break
-            } catch { Start-Sleep -Seconds 1 }
-        }
-        if (-not $ollamaAvailable) {
-            Start-Process -FilePath $ollamaExe -ArgumentList 'serve' -WindowStyle Hidden | Out-Null
-            for ($attempt = 0; $attempt -lt 45; $attempt++) {
-                try {
-                    $null = Invoke-RestMethod -Uri 'http://127.0.0.1:11434/api/tags' -TimeoutSec 2
-                    $ollamaAvailable = $true
-                    break
-                } catch { Start-Sleep -Seconds 1 }
-            }
-        }
-        if (-not $ollamaAvailable) { throw 'Ollama did not start its local API at 127.0.0.1:11434.' }
-        $modelListResult = Invoke-NativeTool $ollamaExe @('list')
-        $installedModels = $modelListResult.Output
-        if ($modelListResult.ExitCode -ne 0) { throw "Could not list local Ollama models.`n$installedModels" }
-        if ($installedModels -notmatch '(?m)^qwen2\.5:1\.5b\s') {
-            Say "Downloading the local translation model $ollamaModel (about 1 GB)"
-            Report-SetupProgress 47
-            $modelPullResult = Invoke-NativeTool $ollamaExe @('pull', $ollamaModel)
-            if (-not [string]::IsNullOrWhiteSpace($modelPullResult.Output)) {
-                $modelPullResult.Output -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { Write-Host $_ }
-            }
-            if ($modelPullResult.ExitCode -ne 0) { throw "Could not download the Ollama model $ollamaModel. Check the internet connection and disk space, then rerun setup." }
-        } else {
-            Say "The local translation model $ollamaModel is already installed"
-        }
-        Report-SetupProgress 55
-    }
+    Say 'Ollama is optional and can be downloaded from its official page after installation'
+    Report-SetupProgress 55
 
     Say 'Stopping IndoSubMod and removing stale build files'
     $managedPrefix = $appRootFull + '\'
@@ -397,12 +325,14 @@ try {
     $sourceBannerFile = Get-Item -LiteralPath (Join-Path $source 'IndoSubModBanner.png')
     $sourceLogoFile = Get-Item -LiteralPath (Join-Path $source 'IndoSubModLogo.png')
     $sourceBrandLogoFile = Get-Item -LiteralPath (Join-Path $source 'AILautanModBanner.png')
+    $sourceBrandLogoDisplayFile = Get-Item -LiteralPath (Join-Path $source 'AILautanModBannerDisplay.png')
     $reuseBuiltApp = (Test-Path -LiteralPath $existingBundleExe) -and
         ((Get-Item -LiteralPath $existingBundleExe).Length -gt 10000000) -and
         ((Get-Item -LiteralPath $existingBundleExe).LastWriteTime -ge $sourceAppFile.LastWriteTime) -and
         ((Get-Item -LiteralPath $existingBundleExe).LastWriteTime -ge $sourceBannerFile.LastWriteTime) -and
         ((Get-Item -LiteralPath $existingBundleExe).LastWriteTime -ge $sourceLogoFile.LastWriteTime) -and
         ((Get-Item -LiteralPath $existingBundleExe).LastWriteTime -ge $sourceBrandLogoFile.LastWriteTime) -and
+        ((Get-Item -LiteralPath $existingBundleExe).LastWriteTime -ge $sourceBrandLogoDisplayFile.LastWriteTime) -and
         ((Get-Item -LiteralPath $existingBundleExe).LastWriteTime -ge $sourceVersionFile.LastWriteTime) -and
         ((Get-Item -LiteralPath $existingBundleExe).LastWriteTime -ge $sourceIconFile.LastWriteTime)
     if (-not $reuseBuiltApp) {
@@ -421,9 +351,10 @@ try {
             $bannerData = "$(Join-Path $source 'IndoSubModBanner.png');."
             $logoData = "$(Join-Path $source 'IndoSubModLogo.png');."
             $brandLogoData = "$(Join-Path $source 'AILautanModBanner.png');."
+            $brandLogoDisplayData = "$(Join-Path $source 'AILautanModBannerDisplay.png');."
         Push-Location $source
         try {
-            $pyInstallerArgs = @('-m','PyInstaller','--noconfirm','--clean','--onedir','--noconsole','--name','IndoSubMod','--icon',$iconPath,'--add-data',$iconData,'--add-data',$bannerData,'--add-data',$logoData,'--add-data',$brandLogoData,'--collect-all','faster_whisper','--collect-all','ctranslate2','--collect-all','av','--collect-all','onnxruntime','--collect-all','argostranslate','--collect-all','sentencepiece','--collect-all','keyring','--collect-all','imageio_ffmpeg','--collect-binaries','torch','--hidden-import','keyring.backends.Windows','IndoSubMod.py')
+            $pyInstallerArgs = @('-m','PyInstaller','--noconfirm','--clean','--onedir','--noconsole','--name','IndoSubMod','--icon',$iconPath,'--add-data',$iconData,'--add-data',$bannerData,'--add-data',$logoData,'--add-data',$brandLogoData,'--add-data',$brandLogoDisplayData,'--collect-all','faster_whisper','--collect-all','ctranslate2','--collect-all','av','--collect-all','onnxruntime','--collect-all','argostranslate','--collect-all','sentencepiece','--collect-all','keyring','--collect-all','imageio_ffmpeg','--collect-binaries','torch','--hidden-import','keyring.backends.Windows','IndoSubMod.py')
             $buildResult = Invoke-NativeTool $venvPython $pyInstallerArgs
             if ($buildResult.ExitCode -ne 0) { throw "EXE build failed.`n$($buildResult.Output)" }
         } finally { Pop-Location }

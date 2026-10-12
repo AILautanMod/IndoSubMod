@@ -20,9 +20,12 @@ $zip = Join-Path $stage 'IndoSubModPayload.zip'
 $builtOutput = Join-Path $stage 'IndoSubModSetup.exe'
 New-Item -ItemType Directory -Path $payload -Force | Out-Null
 try {
-    foreach ($name in @('IndoSubMod.py','requirements.txt','install.ps1','prepare_models.py','IndoSubMod_version.py','IndoSubMod.ico','IndoSubModBanner.png','IndoSubModLogo.png','AILautanModBanner.png','uninstall.ps1')) {
+    foreach ($name in @('requirements.txt','install.ps1','prepare_models.py','IndoSubMod_version.py','IndoSubMod.ico','IndoSubModBanner.png','IndoSubModLogo.png','AILautanModBanner.png','AILautanModBannerDisplay.png','uninstall.ps1')) {
         Copy-Item -LiteralPath (Join-Path $sourceDir $name) -Destination (Join-Path $payload $name)
     }
+    # Keep the established payload filename expected by install.ps1 and PyInstaller,
+    # while building it from the current, case-insensitively named source file.
+    Copy-Item -LiteralPath (Join-Path $sourceDir 'indosubmod.py') -Destination (Join-Path $payload 'IndoSubMod.py')
     foreach ($scriptName in @('install.ps1','uninstall.ps1')) {
         $scriptPath = Join-Path $payload $scriptName
         $parseTokens = $null

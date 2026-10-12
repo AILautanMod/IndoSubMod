@@ -1,11 +1,11 @@
 # IndoSubMod — Panduan Penggunaan
 
-**Versi 1.6.47 · Windows 64-bit**
+**Versi 1.6.54 · Windows 64-bit**
 
 ## Instalasi
 
 1. Buka `IndoSubModSetup.exe` dengan klik dua kali.
-2. Pilih folder instalasi dan komponen opsional di jendela pemasang. Komponen aplikasi dan pengenalan suara wajib; model terjemahan offline dan pintasan desktop bersifat opsional.
+2. Pilih folder instalasi dan komponen opsional di jendela pemasang. Komponen aplikasi dan pengenalan suara wajib; model terjemahan offline dan pintasan desktop bersifat opsional. Ollama ditawarkan setelah aplikasi pertama kali dibuka: Ya membuka halaman unduhan resmi, sedangkan Tidak melanjutkan tanpa membukanya.
 3. Klik **Setujui & Instal** untuk menyatakan persetujuan terhadap ketentuan, lalu tunggu sampai proses selesai. Pemasang menampilkan tahap serta persentase kemajuan.
 4. Setelah selesai, jalankan IndoSubMod dari pintasan desktop atau menu Start. Tombol **Dukung Kreator** tersedia di pemasang dan aplikasi.
 
@@ -48,12 +48,12 @@ Video yang didukung bergantung pada format yang dapat dibaca FFmpeg, termasuk MP
 
 # IndoSubMod — User Guide
 
-**Version 1.6.47 · Windows 64-bit**
+**Version 1.6.54 · Windows 64-bit**
 
 ## Installation
 
 1. Double-click `IndoSubModSetup.exe`.
-2. Choose an installation folder and any optional components in the installer. The application and speech recognition components are required; the offline translation model and desktop shortcut are optional.
+2. Choose an installation folder and any optional components in the installer. The application and speech recognition components are required; the offline translation model and desktop shortcut are optional. Ollama is offered after the first launch: Yes opens the official download page, while No continues without opening it.
 3. Click **Agree & Install** to confirm acceptance of the terms, then wait for completion. The installer displays the current stage and progress percentage.
 4. When setup finishes, launch IndoSubMod from the desktop shortcut or Start menu. The **Support the Creator** button is available in both the installer and the app.
 
@@ -74,7 +74,7 @@ The source video file remains unchanged. The output is a new MKV with a separate
 ## Translation modes
 
 - **Offline:** Argos Translate translates English to Indonesian locally. No API key is required, and text is not sent to an online service.
-- **Your local model (Ollama):** IndoSubMod sends text only to Ollama's local API on this computer (`127.0.0.1:11434`). Translation does not use a cloud API or internet. When selected, the installer installs Ollama and downloads the Qwen2.5 1.5B translation model; select it in the app. Ollama is the local runtime, and your selected model performs the translation. Downloading Ollama and model weights takes disk space and usually requires internet; after download, inference can run offline.
+- **Your local model (Ollama):** IndoSubMod sends text only to Ollama's local API on this computer (`127.0.0.1:11434`). Translation does not use a cloud API or internet. On first launch, IndoSubMod asks whether to open the official Ollama for Windows download page. IndoSubMod does not install Ollama or download a model. After installing Ollama, download a model separately and select it in the app. Ollama is the local runtime, and your selected model performs the translation. Downloading Ollama and model weights takes disk space and usually requires internet; after download, inference can run offline.
 - **GPT online:** requires an internet connection and an OpenAI API key. Recognized English text is sent to OpenAI for translation. API charges may apply separately from a ChatGPT subscription.
 
 Choose online mode only if you agree to have the text processed by that service. To keep subtitle text off cloud services, choose the local model or Argos. Speech recognition runs locally with Whisper once its model is available.

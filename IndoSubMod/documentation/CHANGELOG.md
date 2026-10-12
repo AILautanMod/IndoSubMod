@@ -1,3 +1,40 @@
+## 1.6.54 — 2026-10-12
+
+- Shrinks the installer version panel to fit its two version labels without excess empty space.
+
+## 1.6.53 — 2026-10-12
+
+- Places the installer version labels on a dark, cyan-outlined panel and stacks English and Indonesian versions to keep both fully visible over the banner.
+
+## 1.6.52 — 2026-10-12
+
+- Separates the installer version into English and Indonesian labels so they do not overlap.
+- Removes stray component-row border fragments and redraws the install-folder icon as a clear folder glyph.
+- Refines the main-app rounded button layout and gold gradient, shortens the hero subtitle to keep it clear of the higher-quality brand logo, and gives translation choices readable compact bilingual labels.
+
+## 1.6.51 — 2026-10-12
+
+- Removes dark text blocks by matching label and frame backgrounds; improves small-label contrast and uses Trebuchet MS for a softer, clearer interface.
+- Matches the main app button corner radius to the installer and keeps the higher-resolution brand mark bundled with the app.
+- Keeps installer component text readable during setup and redraws the folder icon at a larger size.
+
+## 1.6.50 — 2026-10-12
+
+- Gives application and setup buttons softly rounded corners while preserving their pressed-state animation.
+
+## 1.6.49 — 2026-10-12
+
+- Restores the create-video button after successful jobs, failures, and unexpected worker termination so another video can be processed without restarting the app.
+- Adds a brief pressed-state animation to buttons throughout the application and installer.
+- Fixes a status update error that could stop processing when the first progress event arrived.
+- Handles empty worker-exit notifications safely while restoring the interface for another run.
+
+## 1.6.48 — 2026-10-12
+
+- Removed Ollama and model downloads from IndoSubMod setup.
+- Added a first-launch Yes/No prompt; Yes opens Ollama's official Windows download page, while No continues without redirecting.
+- Selects Argos offline by default when installed, otherwise GPT online, so declining Ollama does not block startup.
+
 ## 1.6.47 — 2026-10-12
 
 - Fixed Ollama model setup failing when PowerShell 5.1 received its native progress output on stderr.
