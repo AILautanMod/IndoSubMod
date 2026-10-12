@@ -1,7 +1,0 @@
-faster-whisper==1.2.1
-# PyAV 19 removed an argument used by the current stable faster-whisper audio decoder.
-av==18.1.0
-argostranslate==1.11.0
-keyring==25.7.0
-imageio-ffmpeg==0.6.0
-pyinstaller==6.22.3
